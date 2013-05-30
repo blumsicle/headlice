@@ -5,6 +5,7 @@
 #include <stdio.h>          /* *** remove this **** */
 #include <stdarg.h>
 #include <string.h>
+#include <errno.h>
 
 #include "lice.h"
 
@@ -27,8 +28,8 @@ struct lice_t {
 };
 
 lice_t *lice_new(void)
-{
 #define EMPTYSTR(p) do { p = strdup(""); if (p == NULL) goto error; } while (0)
+{
   lice_t *handler;
 
   handler = calloc(1, sizeof *handler);
@@ -68,44 +69,49 @@ void lice_free(lice_t *handler)
 }
 
 int lice_setopt(lice_t *handler, enum lice_option opt, ...)
+#define REPLACESTR(p) \
+  do { char *tmp = va_arg(args, char *); \
+       if (tmp) { free(p); p = strdup(tmp); if (p == NULL) goto error; } \
+  } while (0)
 {
   va_list args;
+  size_t width;
+
+  if (handler == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
 
   va_start(args, opt);
   switch (opt) {
     case LICE_OPT_AUTHOR:
-      printf("oldauthor:    %s\n", handler->author);
-      printf("author:       %s\n\n", va_arg(args, char *));
+      REPLACESTR(handler->author);
       break;
 
     case LICE_OPT_EMAIL:
-      printf("oldemail:     %s\n", handler->email);
-      printf("email:        %s\n\n", va_arg(args, char *));
+      REPLACESTR(handler->email);
       break;
 
     case LICE_OPT_LICETYPE:
-      printf("oldlicetype:  %ld\n", (long)handler->licetype);
-      printf("licetype:     %ld\n\n", va_arg(args, long));
+      handler->licetype = va_arg(args, enum lice_licetype);
       break;
 
     case LICE_OPT_LINEWIDTH:
-      printf("oldlinewidth  %ld\n", handler->linewidth);
-      printf("linewidth:    %ld\n\n", va_arg(args, long));
+      width = va_arg(args, size_t);
+      if (width > 0)
+        handler->linewidth = width;
       break;
 
     case LICE_OPT_PROGTYPE:
-      printf("oldprogtype:  %ld\n", (long)handler->progtype);
-      printf("progtype:     %ld\n\n", va_arg(args, long));
+      handler->progtype = va_arg(args, enum lice_progtype);
       break;
 
     case LICE_OPT_VERSION:
-      printf("oldversion    %s\n", handler->version);
-      printf("version:      %s\n\n", va_arg(args, char *));
+      REPLACESTR(handler->version);
       break;
 
     case LICE_OPT_YEAR:
-      printf("oldyear:      %s\n", handler->year);
-      printf("year:         %s\n\n", va_arg(args, char *));
+      REPLACESTR(handler->year);
       break;
 
     default:
@@ -114,14 +120,29 @@ int lice_setopt(lice_t *handler, enum lice_option opt, ...)
   va_end(args);
 
   return 0;
+
+error:
+  va_end(args);
+  return -1;
 }
+#undef REPLACESTR
 
 int lice_format(lice_t *handler)
 {
+  if (handler == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
   return 0;
 }
 
 char *lice_toarray(lice_t *handler)
 {
+  if (handler == NULL) {
+    errno = EINVAL;
+    return NULL;
+  }
+
   return handler->buf;
 }
