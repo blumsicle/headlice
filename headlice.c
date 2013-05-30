@@ -11,8 +11,9 @@
 #include "lice.h"
 
 static const char *progname;
+static lice_t *handler;
 
-static struct {
+static struct config {                                              /* {{{ */
   char *author;
   char *email;
   char *version;
@@ -22,51 +23,80 @@ static struct {
 
   enum lice_licetype licetype;
   enum lice_progtype progtype;
-} config;
 
-static enum lice_licetype get_licetype(const char *str)
+  FILE *fp;
+} config;                                                           /* }}} */
+
+static void usage(void);
+static void cleanup(void);
+static int parseoptions(int argc, char **argv);
+
+static void usage(void)                                             /* {{{ */
 {
-  enum lice_licetype type;
-  size_t len = strlen(str);
+  int i;
 
-  if (strncmp(str, "gpl", len) == 0 || strncmp(str, "GPL", len) == 0)
-    type = LICE_LT_GPL;
-  else if (strncmp(str, "lgpl", len) == 0 || strncmp(str, "LGPL", len) == 0)
-    type = LICE_LT_LGPL;
-  else
-    type = LICE_LT_OTHER;
+  fprintf(stderr, "Usage: %s [OPTION]... [FILE]\n"
+                  "Write desired license in comment block to stdout or "
+                  "append to FILE.\n\n", progname);
 
-  return type;
-}
+  fprintf(stderr, "  -a, --author=NAME              replace %%author%% with "
+                                          "NAME in license output\n");
+  fprintf(stderr, "  -e, --email=EMAIL              replace %%email%% with "
+                                          "EMAIL in license output\n");
+  fprintf(stderr, "  -h, --help                     display this help and "
+                                          "exit\n");
+  fprintf(stderr, "  -t, --license-type=LICENSE     select LICENSE template "
+                                          "to use\n");
+  fprintf(stderr, "  -v, --license-version=VERSION  replace %%licever%% with "
+                                          "VERSION in license output\n");
+  fprintf(stderr, "  -w, --line-width=WIDTH         maximum output line "
+                                          "width\n");
+  fprintf(stderr, "  -p, --program-type=PROGRAM     type of program the "
+                                          "license pertains to\n");
+  fprintf(stderr, "  -y, --year=YEAR                replace %%year%% with "
+                                          "YEAR in license output\n\n");
 
-static enum lice_progtype get_progtype(const char *str)
+  fprintf(stderr, "WIDTH is in integer that must be greater than %ld.\n",
+      (long)LICE_LINEWIDTH_MINIMUM);
+
+  fprintf(stderr, "LICENSE can be one of:");
+  for (i = 1; i <= LICE_LT_OTHER; i++)
+    fprintf(stderr, " %s", lice_licetype_str(i));
+  fprintf(stderr, ".\n");
+
+  fprintf(stderr, "PROGRAM can be one of:");
+  for (i = 1; i <= LICE_PT_OTHER; i++)
+    fprintf(stderr, " %s", lice_progtype_str(i));
+  fprintf(stderr, ".\n\n");
+
+  fprintf(stderr, "The default directory of the licenses is: %s\n\n", LICEPATH);
+  fprintf(stderr, "NOTE: As stated previously, if FILE is provided, the "
+                  " license will be\n*appended* to FILE.  It will not "
+                  "overwrite FILE, nor will it be placed\npreceeding the "
+                  "previous content.\n");
+}                                                                   /* }}} */
+
+static void cleanup(void)                                           /* {{{ */
 {
-  enum lice_progtype type;
-  size_t len = strlen(str);
+  if (handler)
+    lice_free(handler);
+  if (config.fp)
+    fclose(config.fp);
+}                                                                   /* }}} */
 
-  if (strncmp(str, "program", len) == 0 || strncmp(str, "PROGRAM", len) == 0)
-    type = LICE_PT_PROGRAM;
-  else if (strncmp(str, "license", len) == 0 || strncmp(str, "LICENSE", len) == 0)
-    type = LICE_PT_LICENSE;
-  else
-    type = LICE_PT_OTHER;
-
-  return type;
-}
-
-static int parseoptions(int argc, char **argv)
+static int parseoptions(int argc, char **argv)                      /* {{{ */
 {
   int opt;
 
-  static const char *shortopts = "a:e:ht:v:w:p:y";
+  static const char *shortopts = "a:e:hp:t:v:w:y:";
   static const struct option longopts[] = {
     { "author",           required_argument, 0, 'a' },
     { "email",            required_argument, 0, 'e' },
     { "help",             no_argument,       0, 'h' },
+    { "program-type",     required_argument, 0, 'p' },
     { "license-type",     required_argument, 0, 't' },
     { "license-version",  required_argument, 0, 'v' },
     { "line-width",       required_argument, 0, 'w' },
-    { "program-type",     required_argument, 0, 'p' },
     { "year",             required_argument, 0, 'y' },
     { 0, 0, 0, 0 }
   };
@@ -88,13 +118,17 @@ static int parseoptions(int argc, char **argv)
         break;
 
       case 'h':
-        printf("*** create a usage() damnit!! ***\n");
+        usage();
         exit(EXIT_SUCCESS);
+
+      case 'p':
+        if (config.progtype == LICE_PT_NONE)
+          config.progtype = lice_progtype_type(optarg);
         break;
 
       case 't':
         if (config.licetype == LICE_LT_NONE)
-          config.licetype = get_licetype(optarg);
+          config.licetype = lice_licetype_type(optarg);
         break;
 
       case 'v':
@@ -113,19 +147,15 @@ static int parseoptions(int argc, char **argv)
             return -1;
           }
 
-          if (width <= 0) {
-            fprintf(stderr, "%s: --line-width argument must be positive\n",
-                progname);
+          if (width < LICE_LINEWIDTH_MINIMUM) {
+            fprintf(stderr,
+                "%s: --line-width argument must be greater than %ld\n",
+                progname, (long)LICE_LINEWIDTH_MINIMUM);
             return -1;
           }
 
           config.linewidth = width;
         }
-        break;
-
-      case 'p':
-        if (config.progtype == LICE_PT_NONE)
-          config.progtype = get_progtype(optarg);
         break;
 
       case 'y':
@@ -139,25 +169,24 @@ static int parseoptions(int argc, char **argv)
   }
 
   return 0;
-}
+}                                                                   /* }}} */
 
-int main(int argc, char **argv)
+int main(int argc, char **argv)                                     /* {{{ */
 {
-
-  lice_t *handler;
-  FILE *fp = NULL;
   char *licehead;
 
   progname = argv[0];
+
+  atexit(cleanup);
 
   if (parseoptions(argc, argv) == -1) {
     fprintf(stderr, "Try --help for more information\n");
     exit(EXIT_FAILURE);
   }
 
-  if (optind < argc) {
-    fp = fopen(argv[optind], "a");
-    if (fp == NULL) {
+  if (optind < argc && argv[optind][0] != '-') {
+    config.fp = fopen(argv[optind], "a");
+    if (config.fp == NULL) {
       fprintf(stderr, "%s: could not open %s for writing (%s)\n", progname,
           argv[optind], strerror(errno));
       exit(EXIT_FAILURE);
@@ -171,6 +200,9 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
+  /* TODO: right now, these options are being set regardless of their
+   * contents; lice_setopt() can handle NULL and invalid options, but this
+   * should be fixed. */
   lice_setopt(handler, LICE_OPT_AUTHOR,    config.author);
   lice_setopt(handler, LICE_OPT_EMAIL,     config.email);
   lice_setopt(handler, LICE_OPT_VERSION,   config.version);
@@ -179,15 +211,16 @@ int main(int argc, char **argv)
   lice_setopt(handler, LICE_OPT_LICETYPE,  config.licetype);
   lice_setopt(handler, LICE_OPT_PROGTYPE,  config.progtype);
 
-  if (lice_format(handler) == -1) {
+  if (lice_get(handler) == -1) {
     fprintf(stderr, "%s: could not format license (%s)\n", progname,
         strerror(errno));
     exit(EXIT_FAILURE);
   }
 
-  licehead = lice_toarray(handler);
-  fputs(licehead, fp ? fp : stdout);
+  lice_format(handler);
 
-  lice_free(handler);
+  licehead = lice_toarray(handler);
+  fputs(licehead, config.fp ? config.fp : stdout);
+
   exit(EXIT_SUCCESS);
-}
+}                                                                   /* {{{ */

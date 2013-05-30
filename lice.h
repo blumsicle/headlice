@@ -5,6 +5,11 @@
 #ifndef LICE_H
 #define LICE_H
 
+#ifndef LICE_LINEWIDTH_MINIMUM
+# define LICE_LINEWIDTH_MINIMUM 50
+#endif
+
+
 typedef struct lice_t lice_t;
 
 enum lice_option {
@@ -33,7 +38,12 @@ enum lice_progtype {
 
 lice_t *lice_new(void);
 void lice_free(lice_t *handler);
+char *lice_licetype_str(enum lice_licetype licetype);
+char *lice_progtype_str(enum lice_progtype progtype);
+enum lice_licetype lice_licetype_type(const char *str);
+enum lice_progtype lice_progtype_type(const char *str);
 int lice_setopt(lice_t *handler, enum lice_option opt, ...);
+int lice_get(lice_t *handler);
 int lice_format(lice_t *handler);
 char *lice_toarray(lice_t *handler);
 
